@@ -3,11 +3,20 @@ app.py — Alfaleus Streamlit Dashboard [Agent 3]
 """
 import streamlit as st
 import pandas as pd
-import requests
+import os
+from pymongo import MongoClient
 from datetime import datetime, timezone
 
 # Configuration
-API_BASE_URL = "http://localhost:8000"
+@st.cache_resource
+def get_database():
+    try:
+        uri = st.secrets.get("MONGO_URI")
+    except Exception:
+        uri = None
+    uri = uri or os.getenv("MONGO_URI") or "mongodb://localhost:27017/alfaleus"
+    client = MongoClient(uri)
+    return client.get_database("alfaleus")
 
 st.set_page_config(
     page_title="Alfaleus | Startup Opportunity Aggregator",
@@ -47,22 +56,18 @@ st.markdown("""
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_opportunities() -> pd.DataFrame:
-    all_data = []
-    page = 1
-    page_size = 100
-    while True:
-        try:
-            resp = requests.get(f"{API_BASE_URL}/opportunities", params={"page": page, "page_size": page_size})
-            resp.raise_for_status()
-            data = resp.json()
-            items = data.get("data", [])
-            all_data.extend(items)
-            if not items or page >= data.get("pages", 1):
-                break
-            page += 1
-        except Exception as e:
-            st.error(f"Error fetching opportunities: {e}")
-            break
+    try:
+        db = get_database()
+        page = 0
+        page_size = 2000
+        cursor = db.opportunities.find().sort("scraped_at", -1).skip(page * page_size).limit(page_size)
+        all_data = []
+        for d in cursor:
+            d["_id"] = str(d["_id"])
+            all_data.append(d)
+    except Exception as e:
+        st.error(f"Error fetching opportunities: {e}")
+        all_data = []
             
     if not all_data:
         return pd.DataFrame()
@@ -86,18 +91,35 @@ def fetch_opportunities() -> pd.DataFrame:
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_scraper_runs() -> list:
     try:
-        resp = requests.get(f"{API_BASE_URL}/scraper-runs", params={"limit": 5})
-        resp.raise_for_status()
-        return resp.json().get("data", [])
+        db = get_database()
+        cursor = db.scraper_runs.find().sort("start_time", -1).limit(5)
+        runs = []
+        for r in cursor:
+            r["_id"] = str(r["_id"])
+            r["id"] = r["_id"]  # Match expected UI key
+            if "started_at" not in r and "start_time" in r:
+                r["started_at"] = r["start_time"]
+            runs.append(r)
+        return runs
     except Exception as e:
         return []
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_stats() -> dict:
     try:
-        resp = requests.get(f"{API_BASE_URL}/stats")
-        resp.raise_for_status()
-        return resp.json()
+        db = get_database()
+        total = db.opportunities.count_documents({})
+        active_sources = len(db.opportunities.distinct("source"))
+        ai_enriched = db.opportunities.count_documents({"ai_tags": {"$ne": None}})
+        
+        ai_pct = round((ai_enriched / total * 100)) if total > 0 else 0
+        
+        return {
+            "total_opportunities": total,
+            "active_sources": active_sources,
+            "ai_tagged_count": ai_enriched,
+            "ai_tagged_pct": ai_pct
+        }
     except Exception as e:
         return {}
 
