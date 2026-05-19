@@ -3,10 +3,11 @@ ai_enrichment.py — Alfaleus LLM Auto-Tagging  [Agent 2]
 
 Async LLM enrichment with:
 - Primary: Google Gemini (gemini-2.0-flash)
-- Fallback: Groq (llama3-8b-8192)
+- Fallback: Groq (llama-3.1-8b-instant)
 - Strict JSON output enforced via response schema + Pydantic validation
 - Semaphore-bounded concurrency to respect API rate limits
 - Full retry with exponential backoff on transient API errors
+- Quota-aware Gemini fallthrough: 429 errors skip retries → immediate Groq fallback
 """
 from __future__ import annotations
 
@@ -103,6 +104,8 @@ async def _enrich_with_gemini(opp: OpportunityDB) -> Optional[AITags]:
 
 # ── Groq ──────────────────────────────────────────────────────────────────────
 
+GROQ_MODEL = "llama-3.1-8b-instant"  # Replaces decommissioned llama3-8b-8192
+
 async def _enrich_with_groq_desc(description: str) -> Optional[AITags]:
     """Call Groq API as fallback."""
     if not settings.groq_available:
@@ -114,26 +117,36 @@ async def _enrich_with_groq_desc(description: str) -> Optional[AITags]:
     async for attempt in AsyncRetrying(**RETRY_CONFIG):
         with attempt:
             completion = await client.chat.completions.create(
-                model="llama3-8b-8192",
+                model=GROQ_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=512,
             )
             raw_text = completion.choices[0].message.content
-            return _parse_llm_response(raw_text, "llama3-8b-8192")
+            return _parse_llm_response(raw_text, GROQ_MODEL)
 
     return None
 
 
 # ── Tag Opportunity ───────────────────────────────────────────────────────────
 
+def _is_quota_error(exc: Exception) -> bool:
+    """Check if the exception is a Gemini quota/rate-limit error (429)."""
+    exc_str = str(exc).lower()
+    return any(kw in exc_str for kw in ("429", "resourceexhausted", "quota", "rate limit", "rate_limit"))
+
+
 async def tag_opportunity(description: str) -> Optional[AITags]:
     """
     Core AI Tagging Engine mapping directly to the requested Agent 2 prompt.
     Takes a raw description string and returns parsed AITags.
+    
+    Quota-aware: If Gemini returns a 429/ResourceExhausted error, we skip
+    retries and immediately fall through to Groq instead of wasting time.
     """
     async with _SEMAPHORE:
         tags: Optional[AITags] = None
+        gemini_quota_hit = False
         
         if settings.gemini_available:
             try:
@@ -146,21 +159,26 @@ async def tag_opportunity(description: str) -> Optional[AITags]:
                     ),
                 )
                 prompt = _build_prompt_from_desc(description)
-                async for attempt in AsyncRetrying(**RETRY_CONFIG):
-                    with attempt:
-                        response = await asyncio.get_event_loop().run_in_executor(
-                            None, lambda: model.generate_content(prompt)
-                        )
-                        tags = _parse_llm_response(response.text, "gemini-2.0-flash")
-                        break
+                # Single attempt — no point retrying quota limits
+                response = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: model.generate_content(prompt)
+                )
+                tags = _parse_llm_response(response.text, "gemini-2.0-flash")
             except Exception as exc:
-                logger.warning("[Gemini] tag_opportunity failed: %s", exc)
+                if _is_quota_error(exc):
+                    gemini_quota_hit = True
+                    logger.warning("[Gemini] Quota exhausted — falling through to Groq: %s", type(exc).__name__)
+                else:
+                    logger.warning("[Gemini] tag_opportunity failed: %s", exc)
 
         if tags is None and settings.groq_available:
             try:
                 tags = await _enrich_with_groq_desc(description)
             except Exception as exc:
                 logger.warning("[Groq] tag_opportunity failed: %s", exc)
+
+        if tags is None and gemini_quota_hit:
+            logger.info("[AI] Both Gemini (quota) and Groq failed — enrichment skipped")
 
         return tags
 

@@ -22,9 +22,9 @@ from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 import feedparser
-import httpx
+from curl_cffi.requests import AsyncSession
+from curl_cffi.requests.errors import RequestsError
 from bs4 import BeautifulSoup
-from fake_useragent import UserAgent
 from pydantic import ValidationError
 from tenacity import (
     AsyncRetrying,
@@ -44,13 +44,11 @@ OPPORTUNITY_DESK_RSS = "https://opportunitydesk.org/feed/"
 F6S_BASE_URL = "https://www.f6s.com"
 F6S_START_URL = "https://www.f6s.com/opportunities"
 
-REQUEST_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+REQUEST_TIMEOUT = 30.0
 def is_retryable_exception(exc: BaseException) -> bool:
-    if isinstance(exc, httpx.TimeoutException):
-        return True
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code == 429 or exc.response.status_code >= 500
-    if isinstance(exc, httpx.NetworkError):
+    if isinstance(exc, RequestsError):
+        if hasattr(exc, "response") and exc.response:
+            return exc.response.status_code == 429 or exc.response.status_code >= 500
         return True
     return False
 
@@ -62,18 +60,7 @@ RETRY_CONFIG = dict(
     reraise=True,
 )
 
-_ua = UserAgent()
 
-
-def _get_headers() -> dict[str, str]:
-    """Rotate User-Agent on every call to reduce scraper fingerprinting."""
-    return {
-        "User-Agent": _ua.random,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-    }
 
 
 def _parse_date(date_str: Optional[str]) -> Optional[datetime]:
@@ -101,24 +88,39 @@ async def scrape_opportunity_desk(run: ScraperRun) -> list[OpportunityIn]:
     logger.info("[OpportunityDesk] Starting RSS scrape: %s", OPPORTUNITY_DESK_RSS)
     raw_content: bytes = b""
 
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
+    async with AsyncSession(impersonate="chrome110", timeout=REQUEST_TIMEOUT) as client:
         async for attempt in AsyncRetrying(**RETRY_CONFIG):
             with attempt:
-                response = await client.get(OPPORTUNITY_DESK_RSS, headers=_get_headers())
+                response = await client.get(OPPORTUNITY_DESK_RSS)
+                print(f"[DEBUG] OpportunityDesk GET {response.url} - Status: {response.status_code}")
+                if "Just a moment" in response.text:
+                    print("!!! WARNING [OpportunityDesk] Possible Cloudflare bot protection detected! !!!")
                 response.raise_for_status()
                 raw_content = response.content
 
-    feed = feedparser.parse(raw_content)
-    entries = feed.get("entries", [])
+    soup = BeautifulSoup(raw_content, "xml")
+    entries = soup.find_all("item")
+    print(f"[DEBUG] OpportunityDesk RSS: Found {len(entries)} <item> elements")
     logger.info("[OpportunityDesk] Feed parsed: %d entries", len(entries))
     run.items_scraped = len(entries)
 
     opportunities: list[OpportunityIn] = []
     for entry in entries:
         try:
+            title_tag = entry.find("title")
+            title = title_tag.get_text(strip=True) if title_tag else ""
+            
+            link_tag = entry.find("link")
+            link = link_tag.get_text(strip=True) if link_tag else ""
+            
+            desc_tag = entry.find("description")
+            description = desc_tag.get_text(strip=True) if desc_tag else ""
+            
+            content_encoded = entry.find("content:encoded")
+            content = content_encoded.get_text(strip=True) if content_encoded else description
+
             # Extract deadline from content if present
             deadline = None
-            content = entry.get("summary", "") or entry.get("content", [{}])[0].get("value", "")
             deadline_match = re.search(
                 r"[Dd]eadline[:\s]+([A-Z][a-z]+\s+\d{1,2},?\s+\d{4})", content
             )
@@ -126,15 +128,15 @@ async def scrape_opportunity_desk(run: ScraperRun) -> list[OpportunityIn]:
                 deadline = _parse_date(deadline_match.group(1))
 
             # Extract tags from categories
-            tags = [tag.get("term", "") for tag in entry.get("tags", []) if tag.get("term")]
+            tags = [tag.get_text(strip=True) for tag in entry.find_all("category") if tag.get_text(strip=True)]
 
             opp = OpportunityIn(
-                title=entry.get("title", "").strip(),
-                source_url=entry.get("link", "").strip(),
+                title=title,
+                source_url=link,
                 source=DataSource.OPPORTUNITY_DESK,
                 description=_strip_html(content)[:2000],
                 deadline=deadline,
-                organization=entry.get("author", ""),
+                organization="",
                 raw_tags=tags,
             )
             opportunities.append(opp)
@@ -162,7 +164,8 @@ async def scrape_f6s(run: ScraperRun) -> list[OpportunityIn]:
     page_url: Optional[str] = F6S_START_URL
     page_num = 0
 
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
+    bot_blocked = False
+    async with AsyncSession(impersonate="chrome110", timeout=REQUEST_TIMEOUT) as client:
         while page_url and page_num < settings.f6s_max_pages:
             page_num += 1
             logger.info("[F6S] Scraping page %d: %s", page_num, page_url)
@@ -170,9 +173,31 @@ async def scrape_f6s(run: ScraperRun) -> list[OpportunityIn]:
             html_content = ""
             async for attempt in AsyncRetrying(**RETRY_CONFIG):
                 with attempt:
-                    response = await client.get(page_url, headers=_get_headers())
+                    response = await client.get(page_url)
+                    print(f"[DEBUG] F6S GET {response.url} - Status: {response.status_code}")
                     response.raise_for_status()
                     html_content = response.text
+
+            # ── Bot-detection wall check ──────────────────────────
+            _BOT_SIGNATURES = [
+                "we think you might be a bot",
+                "checking your browser",
+                "just a moment",
+                "please enable javascript",
+                "enable cookies",
+            ]
+            page_lower = html_content.lower()
+            if any(sig in page_lower for sig in _BOT_SIGNATURES):
+                bot_msg = (
+                    f"[F6S] Bot-protection wall detected on page {page_num}. "
+                    f"F6S requires JavaScript/cookies — curl_cffi impersonation is insufficient. "
+                    f"Consider using Playwright headless browser or a proxy service."
+                )
+                logger.warning(bot_msg)
+                print(f"!!! BOT-BLOCK [F6S] {bot_msg}")
+                run.log_error(bot_msg)
+                bot_blocked = True
+                break  # No point continuing to next pages
 
             soup = BeautifulSoup(html_content, "lxml")
             items = _parse_f6s_page(soup)
@@ -197,7 +222,10 @@ async def scrape_f6s(run: ScraperRun) -> list[OpportunityIn]:
     run.items_scraped = fetched_raw
     run.validated_count = len(opportunities)
     run.pages_scraped = page_num
-    logger.info("[F6S] Completed: %d valid/%d raw across %d pages", len(opportunities), fetched_raw, page_num)
+    if bot_blocked:
+        logger.warning("[F6S] Aborted: bot-protection blocked scraping (0 items from F6S)")
+    else:
+        logger.info("[F6S] Completed: %d valid/%d raw across %d pages", len(opportunities), fetched_raw, page_num)
     return opportunities
 
 
@@ -210,17 +238,19 @@ def _parse_f6s_page(soup: BeautifulSoup) -> list[dict]:
     items = []
 
     # F6S uses various card selectors; try multiple patterns for resilience
-    cards = (
-        soup.select("div.program-card")
-        or soup.select("div.opportunity-card")
-        or soup.select("article.program")
-        or soup.select("[data-program-id]")
-        or soup.select("div.card.program")
-    )
+    cards = soup.find_all("div", class_=re.compile("card|listing|program|opportunity", re.I))
 
     if not cards:
         # Fallback: find all links that look like program pages
-        cards = soup.select("a[href*='/programs/'], a[href*='/apply/']")
+        cards = soup.find_all("a", href=re.compile(r"/program/|/opportunity/", re.I))
+
+    print(f"[DEBUG] F6S: Found {len(cards)} raw opportunity containers")
+    if not cards:
+        print(f"[DEBUG] F6S FAILSAFE - Title: {soup.title.text if soup.title else 'No Title'}")
+        if soup.body:
+            print(f"[DEBUG] F6S FAILSAFE - Body: {soup.body.text[:500]}")
+        else:
+            print("[DEBUG] F6S FAILSAFE - Body: No Body tag found")
 
     for card in cards:
         try:

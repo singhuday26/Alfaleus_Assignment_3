@@ -57,19 +57,33 @@ MOCK_F6S_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+MOCK_F6S_BOT_PAGE = """<!DOCTYPE html>
+<html>
+<body>
+<p>Checking your browser</p>
+<p>We think you might be a bot</p>
+<p>Please enable JavaScript in your web browser.</p>
+</body>
+</html>"""
+
+
 class TestOpportunityDeskScraper:
     @pytest.mark.asyncio
     async def test_returns_valid_opportunities(self):
         """Scraper should return OpportunityIn objects from valid RSS."""
         mock_response = MagicMock()
         mock_response.content = MOCK_RSS_CONTENT
+        mock_response.text = MOCK_RSS_CONTENT.decode()
+        mock_response.status_code = 200
+        mock_response.url = "https://opportunitydesk.org/feed/"
         mock_response.raise_for_status = MagicMock()
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_client.return_value)
-            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_client.return_value.get = AsyncMock(return_value=mock_response)
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
+        with patch("scrapers.AsyncSession", return_value=mock_session):
             from scrapers import scrape_opportunity_desk
             run = _make_run()
             opps = await scrape_opportunity_desk(run)
@@ -84,13 +98,17 @@ class TestOpportunityDeskScraper:
         """ScraperRun counts should be updated after scraping."""
         mock_response = MagicMock()
         mock_response.content = MOCK_RSS_CONTENT
+        mock_response.text = MOCK_RSS_CONTENT.decode()
+        mock_response.status_code = 200
+        mock_response.url = "https://opportunitydesk.org/feed/"
         mock_response.raise_for_status = MagicMock()
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_client.return_value)
-            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_client.return_value.get = AsyncMock(return_value=mock_response)
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
+        with patch("scrapers.AsyncSession", return_value=mock_session):
             from scrapers import scrape_opportunity_desk
             run = _make_run()
             opps = await scrape_opportunity_desk(run)
@@ -109,13 +127,17 @@ class TestOpportunityDeskScraper:
 
         mock_response = MagicMock()
         mock_response.content = bad_rss
+        mock_response.text = bad_rss.decode()
+        mock_response.status_code = 200
+        mock_response.url = "https://opportunitydesk.org/feed/"
         mock_response.raise_for_status = MagicMock()
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_client.return_value)
-            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_client.return_value.get = AsyncMock(return_value=mock_response)
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
+        with patch("scrapers.AsyncSession", return_value=mock_session):
             from scrapers import scrape_opportunity_desk
             run = _make_run()
             opps = await scrape_opportunity_desk(run)
@@ -129,28 +151,29 @@ class TestF6SScraper:
     @pytest.mark.asyncio
     async def test_parses_cards_correctly(self):
         """F6S scraper should extract program cards from HTML."""
-        import importlib
-        import scrapers as scrapers_mod
-        importlib.reload(scrapers_mod)
-
         mock_response_p1 = MagicMock()
         mock_response_p1.text = MOCK_F6S_HTML
+        mock_response_p1.status_code = 200
+        mock_response_p1.url = "https://www.f6s.com/opportunities"
         mock_response_p1.raise_for_status = MagicMock()
 
-        # Return HTML for page 1, then no next page for page 2
+        # Return HTML for page 1, then no-content page for page 2
         mock_response_p2 = MagicMock()
         mock_response_p2.text = "<html><body><p>No programs</p></body></html>"
+        mock_response_p2.status_code = 200
+        mock_response_p2.url = "https://www.f6s.com/opportunities?page=2"
         mock_response_p2.raise_for_status = MagicMock()
 
-        mock_instance = AsyncMock()
-        mock_instance.get = AsyncMock(side_effect=[mock_response_p1, mock_response_p2])
-        mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
-        mock_instance.__aexit__ = AsyncMock(return_value=False)
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(side_effect=[mock_response_p1, mock_response_p2])
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
-        with patch.object(scrapers_mod.httpx, "AsyncClient", return_value=mock_instance):
-            with patch.object(scrapers_mod.asyncio, "sleep", new_callable=AsyncMock):
+        with patch("scrapers.AsyncSession", return_value=mock_session):
+            with patch("scrapers.asyncio.sleep", new_callable=AsyncMock):
+                from scrapers import scrape_f6s
                 run = _make_run(DataSource.F6S)
-                opps = await scrapers_mod.scrape_f6s(run)
+                opps = await scrape_f6s(run)
 
         assert len(opps) >= 1
         assert all(o.source == DataSource.F6S for o in opps)
@@ -160,27 +183,49 @@ class TestF6SScraper:
     @pytest.mark.asyncio
     async def test_respects_max_pages(self):
         """F6S scraper must not exceed MAX_PAGES setting."""
-        import importlib
-        import scrapers as scrapers_mod
-        importlib.reload(scrapers_mod)
-
         mock_response = MagicMock()
         # Every page has a "next" link to simulate infinite pagination
         mock_response.text = MOCK_F6S_HTML
+        mock_response.status_code = 200
+        mock_response.url = "https://www.f6s.com/opportunities"
         mock_response.raise_for_status = MagicMock()
 
-        mock_instance = AsyncMock()
-        mock_instance.get = AsyncMock(return_value=mock_response)
-        mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
-        mock_instance.__aexit__ = AsyncMock(return_value=False)
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
-        with patch.object(scrapers_mod.httpx, "AsyncClient", return_value=mock_instance):
-            with patch.object(scrapers_mod.asyncio, "sleep", new_callable=AsyncMock):
-                with patch.object(scrapers_mod, "settings") as mock_settings:
+        with patch("scrapers.AsyncSession", return_value=mock_session):
+            with patch("scrapers.asyncio.sleep", new_callable=AsyncMock):
+                with patch("scrapers.settings") as mock_settings:
                     mock_settings.f6s_max_pages = 2
                     mock_settings.fuzzy_threshold = 85
+                    from scrapers import scrape_f6s
                     run = _make_run(DataSource.F6S)
-                    await scrapers_mod.scrape_f6s(run)
+                    await scrape_f6s(run)
 
         assert run.pages_scraped <= 2
 
+    @pytest.mark.asyncio
+    async def test_bot_detection_aborts_gracefully(self):
+        """F6S scraper should detect bot-protection and abort with a clear error."""
+        mock_response = MagicMock()
+        mock_response.text = MOCK_F6S_BOT_PAGE
+        mock_response.status_code = 200
+        mock_response.url = "https://www.f6s.com/opportunities"
+        mock_response.raise_for_status = MagicMock()
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("scrapers.AsyncSession", return_value=mock_session):
+            with patch("scrapers.asyncio.sleep", new_callable=AsyncMock):
+                from scrapers import scrape_f6s
+                run = _make_run(DataSource.F6S)
+                opps = await scrape_f6s(run)
+
+        assert len(opps) == 0
+        assert len(run.errors_encountered) >= 1
+        assert any("bot-protection" in err.lower() for err in run.errors_encountered)
