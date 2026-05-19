@@ -14,7 +14,7 @@ tenacity==8.3.0
 
 # ── Database ─────────────────────────────────────────────────────
 motor==3.4.0
-pymongo[srv]==4.7.2
+pymongo==4.7.2`ndnspython==2.6.1
 
 # ── Data Validation ──────────────────────────────────────────────
 pydantic[email]==2.7.1
