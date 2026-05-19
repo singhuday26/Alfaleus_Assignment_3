@@ -47,7 +47,7 @@ async def _run_source_pipeline(source: DataSource) -> ScraperRun:
 
     # Persist run start immediately so dashboard shows "running" status
     await db[COLLECTION_SCRAPER_RUNS].insert_one(run.to_mongo_doc())
-    logger.info("[Scheduler] Pipeline started: source=%s run_id=%s", source.value, run.id)
+    logger.info("[Scheduler] Pipeline started: source=%s run_id=%s", source.value, run.run_id)
 
     try:
         # ── Step 1: Scrape ────────────────────────────────────────
@@ -129,13 +129,13 @@ async def _finalize_run(
     """Update the ScraperRun document in MongoDB with final stats."""
     run = run.finalize(status=final_status, **kwargs)
     await db[COLLECTION_SCRAPER_RUNS].update_one(
-        {"_id": run.id},
+        {"_id": run.run_id},
         {"$set": run.to_mongo_doc()},
         upsert=True,
     )
     logger.info(
         "[Scheduler] Run finalized: id=%s status=%s inserted=%d",
-        run.id, run.status.value, run.items_added
+        run.run_id, run.status.value, run.items_added
     )
     return run
 
