@@ -15,8 +15,8 @@ import json
 import logging
 from typing import Optional
 
-import anthropic
 import google.generativeai as genai
+import groq
 from pydantic import ValidationError
 from tenacity import (
     AsyncRetrying,
@@ -101,32 +101,28 @@ async def _enrich_with_gemini(opp: OpportunityDB) -> Optional[AITags]:
     return None
 
 
-# ── Claude ────────────────────────────────────────────────────────────────────
+# ── Groq ──────────────────────────────────────────────────────────────────────
 
-async def _enrich_with_claude_desc(description: str) -> Optional[AITags]:
-    """Call Anthropic Claude API as fallback."""
-    if not settings.claude_available:
+async def _enrich_with_groq_desc(description: str) -> Optional[AITags]:
+    """Call Groq API as fallback."""
+    if not settings.groq_available:
         return None
 
-    client = anthropic.AsyncAnthropic(api_key=settings.claude_api_key)
+    client = groq.AsyncGroq(api_key=settings.groq_api_key)
     prompt = _build_prompt_from_desc(description)
 
     async for attempt in AsyncRetrying(**RETRY_CONFIG):
         with attempt:
-            message = await client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=512,
-                temperature=0.1,
+            completion = await client.chat.completions.create(
+                model="llama3-8b-8192",
                 messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=512,
             )
-            raw_text = message.content[0].text
-            return _parse_llm_response(raw_text, "claude-sonnet-4-5")
+            raw_text = completion.choices[0].message.content
+            return _parse_llm_response(raw_text, "llama3-8b-8192")
 
     return None
-
-
-async def _enrich_with_claude(opp: OpportunityDB) -> Optional[AITags]:
-    return await _enrich_with_claude_desc((opp.description or "")[:1500])
 
 
 # ── Tag Opportunity ───────────────────────────────────────────────────────────
@@ -160,11 +156,11 @@ async def tag_opportunity(description: str) -> Optional[AITags]:
             except Exception as exc:
                 logger.warning("[Gemini] tag_opportunity failed: %s", exc)
 
-        if tags is None and settings.claude_available:
+        if tags is None and settings.groq_available:
             try:
-                tags = await _enrich_with_claude_desc(description)
+                tags = await _enrich_with_groq_desc(description)
             except Exception as exc:
-                logger.warning("[Claude] tag_opportunity failed: %s", exc)
+                logger.warning("[Groq] tag_opportunity failed: %s", exc)
 
         return tags
 

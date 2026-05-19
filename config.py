@@ -36,7 +36,7 @@ class Settings(BaseSettings):
 
     # ── LLM API Keys ─────────────────────────────────────────────
     gemini_api_key: str = Field(default="", description="Google Gemini API key")
-    claude_api_key: str = Field(default="", description="Anthropic Claude API key")
+    groq_api_key: str = Field(default="", description="Groq API key")
 
     # ── Scraper Config ────────────────────────────────────────────
     f6s_max_pages: int = Field(default=10, ge=1, le=50, description="Max F6S pages per run")
@@ -74,12 +74,12 @@ class Settings(BaseSettings):
         return bool(self.gemini_api_key and self.gemini_api_key != "your-gemini-api-key-here")
 
     @property
-    def claude_available(self) -> bool:
-        return bool(self.claude_api_key and self.claude_api_key != "your-claude-api-key-here")
+    def groq_available(self) -> bool:
+        return bool(self.groq_api_key and self.groq_api_key != "your-groq-api-key-here")
 
     @property
     def any_llm_available(self) -> bool:
-        return self.gemini_available or self.claude_available
+        return self.gemini_available or self.groq_available
 
 
 @lru_cache(maxsize=1)
