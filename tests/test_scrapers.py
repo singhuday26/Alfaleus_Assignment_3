@@ -31,40 +31,29 @@ MOCK_RSS_CONTENT = b"""<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>"""
 
-MOCK_F6S_HTML = """<!DOCTYPE html>
-<html>
-<body>
-  <div class="program-card">
-    <h3 class="program-title">MedTech Seed Fund 2025</h3>
-    <a href="/programs/medtech-seed-2025">Apply</a>
-    <p class="description">Seed funding for medical technology startups.</p>
-    <span class="deadline">October 30, 2025</span>
-    <span class="organization">HealthVC Partners</span>
-    <span class="location">London, UK</span>
-    <span class="tag">medtech</span>
-    <span class="tag">seed</span>
-  </div>
-  <div class="program-card">
-    <h3 class="program-title">AI Healthcare Grant</h3>
-    <a href="/programs/ai-health-grant">Apply</a>
-    <p class="description">Grants for AI applications in healthcare.</p>
-    <span class="organization">Digital Health Fund</span>
-    <span class="tag">ai</span>
-    <span class="tag">healthtech</span>
-  </div>
-  <a rel="next" href="/opportunities?page=2">Next</a>
-</body>
-</html>"""
-
-
-MOCK_F6S_BOT_PAGE = """<!DOCTYPE html>
-<html>
-<body>
-<p>Checking your browser</p>
-<p>We think you might be a bot</p>
-<p>Please enable JavaScript in your web browser.</p>
-</body>
-</html>"""
+MOCK_TECHCRUNCH_RSS = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Startups | TechCrunch</title>
+    <item>
+      <title>Anduril raises $5B, doubles valuation to $61B</title>
+      <link>https://techcrunch.com/2026/05/13/anduril-raises-5b-doubles-valuation-to-61b/</link>
+      <dc:creator>Julie Bort</dc:creator>
+      <description>After achieving $2.2 billion in revenue in 2025, the defense tech startup raises another round.</description>
+      <category>Fundraising</category>
+      <category>Startups</category>
+      <category>defense tech</category>
+    </item>
+    <item>
+      <title>Nectar Social raises $30M Series A led by Menlo</title>
+      <link>https://techcrunch.com/2026/05/16/nectar-social-raises-30m-series-a/</link>
+      <dc:creator>Dominic-Madori Davis</dc:creator>
+      <description>AI-powered marketing platform Nectar Social announced a $30 million Series A round.</description>
+      <category>Startups</category>
+      <category>Venture</category>
+    </item>
+  </channel>
+</rss>"""
 
 
 class TestOpportunityDeskScraper:
@@ -147,47 +136,15 @@ class TestOpportunityDeskScraper:
         assert len(run.errors_encountered) >= 1  # Bad item should be logged
 
 
-class TestF6SScraper:
+class TestTechCrunchScraper:
     @pytest.mark.asyncio
-    async def test_parses_cards_correctly(self):
-        """F6S scraper should extract program cards from HTML."""
-        mock_response_p1 = MagicMock()
-        mock_response_p1.text = MOCK_F6S_HTML
-        mock_response_p1.status_code = 200
-        mock_response_p1.url = "https://www.f6s.com/opportunities"
-        mock_response_p1.raise_for_status = MagicMock()
-
-        # Return HTML for page 1, then no-content page for page 2
-        mock_response_p2 = MagicMock()
-        mock_response_p2.text = "<html><body><p>No programs</p></body></html>"
-        mock_response_p2.status_code = 200
-        mock_response_p2.url = "https://www.f6s.com/opportunities?page=2"
-        mock_response_p2.raise_for_status = MagicMock()
-
-        mock_session = AsyncMock()
-        mock_session.get = AsyncMock(side_effect=[mock_response_p1, mock_response_p2])
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("scrapers.AsyncSession", return_value=mock_session):
-            with patch("scrapers.asyncio.sleep", new_callable=AsyncMock):
-                from scrapers import scrape_f6s
-                run = _make_run(DataSource.F6S)
-                opps = await scrape_f6s(run)
-
-        assert len(opps) >= 1
-        assert all(o.source == DataSource.F6S for o in opps)
-        titles = [o.title for o in opps]
-        assert any("MedTech" in t for t in titles)
-
-    @pytest.mark.asyncio
-    async def test_respects_max_pages(self):
-        """F6S scraper must not exceed MAX_PAGES setting."""
+    async def test_returns_valid_opportunities(self):
+        """TechCrunch scraper should return OpportunityIn objects from RSS."""
         mock_response = MagicMock()
-        # Every page has a "next" link to simulate infinite pagination
-        mock_response.text = MOCK_F6S_HTML
+        mock_response.content = MOCK_TECHCRUNCH_RSS
+        mock_response.text = MOCK_TECHCRUNCH_RSS.decode()
         mock_response.status_code = 200
-        mock_response.url = "https://www.f6s.com/opportunities"
+        mock_response.url = "https://techcrunch.com/category/startups/feed/"
         mock_response.raise_for_status = MagicMock()
 
         mock_session = AsyncMock()
@@ -196,23 +153,22 @@ class TestF6SScraper:
         mock_session.__aexit__ = AsyncMock(return_value=False)
 
         with patch("scrapers.AsyncSession", return_value=mock_session):
-            with patch("scrapers.asyncio.sleep", new_callable=AsyncMock):
-                with patch("scrapers.settings") as mock_settings:
-                    mock_settings.f6s_max_pages = 2
-                    mock_settings.fuzzy_threshold = 85
-                    from scrapers import scrape_f6s
-                    run = _make_run(DataSource.F6S)
-                    await scrape_f6s(run)
+            from scrapers import scrape_techcrunch
+            run = _make_run(DataSource.TECHCRUNCH)
+            opps = await scrape_techcrunch(run)
 
-        assert run.pages_scraped <= 2
+        assert len(opps) == 2
+        assert all(o.source == DataSource.TECHCRUNCH for o in opps)
+        assert "techcrunch.com" in opps[0].source_url
 
     @pytest.mark.asyncio
-    async def test_bot_detection_aborts_gracefully(self):
-        """F6S scraper should detect bot-protection and abort with a clear error."""
+    async def test_run_counts_updated(self):
+        """ScraperRun counts should be updated after TechCrunch scrape."""
         mock_response = MagicMock()
-        mock_response.text = MOCK_F6S_BOT_PAGE
+        mock_response.content = MOCK_TECHCRUNCH_RSS
+        mock_response.text = MOCK_TECHCRUNCH_RSS.decode()
         mock_response.status_code = 200
-        mock_response.url = "https://www.f6s.com/opportunities"
+        mock_response.url = "https://techcrunch.com/category/startups/feed/"
         mock_response.raise_for_status = MagicMock()
 
         mock_session = AsyncMock()
@@ -221,11 +177,88 @@ class TestF6SScraper:
         mock_session.__aexit__ = AsyncMock(return_value=False)
 
         with patch("scrapers.AsyncSession", return_value=mock_session):
-            with patch("scrapers.asyncio.sleep", new_callable=AsyncMock):
-                from scrapers import scrape_f6s
-                run = _make_run(DataSource.F6S)
-                opps = await scrape_f6s(run)
+            from scrapers import scrape_techcrunch
+            run = _make_run(DataSource.TECHCRUNCH)
+            opps = await scrape_techcrunch(run)
 
-        assert len(opps) == 0
+        assert run.items_scraped == 2
+        assert run.validated_count == 2
+
+    @pytest.mark.asyncio
+    async def test_extracts_categories_as_tags(self):
+        """TechCrunch scraper should populate raw_tags from <category> elements."""
+        mock_response = MagicMock()
+        mock_response.content = MOCK_TECHCRUNCH_RSS
+        mock_response.text = MOCK_TECHCRUNCH_RSS.decode()
+        mock_response.status_code = 200
+        mock_response.url = "https://techcrunch.com/category/startups/feed/"
+        mock_response.raise_for_status = MagicMock()
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("scrapers.AsyncSession", return_value=mock_session):
+            from scrapers import scrape_techcrunch
+            run = _make_run(DataSource.TECHCRUNCH)
+            opps = await scrape_techcrunch(run)
+
+        # First item (Anduril) has 3 categories
+        assert "Fundraising" in opps[0].raw_tags
+        assert "Startups" in opps[0].raw_tags
+        assert "defense tech" in opps[0].raw_tags
+
+    @pytest.mark.asyncio
+    async def test_maps_creator_to_organization(self):
+        """dc:creator field should be mapped to the organization field."""
+        mock_response = MagicMock()
+        mock_response.content = MOCK_TECHCRUNCH_RSS
+        mock_response.text = MOCK_TECHCRUNCH_RSS.decode()
+        mock_response.status_code = 200
+        mock_response.url = "https://techcrunch.com/category/startups/feed/"
+        mock_response.raise_for_status = MagicMock()
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("scrapers.AsyncSession", return_value=mock_session):
+            from scrapers import scrape_techcrunch
+            run = _make_run(DataSource.TECHCRUNCH)
+            opps = await scrape_techcrunch(run)
+
+        assert opps[0].organization == "Julie Bort"
+        assert opps[1].organization == "Dominic-Madori Davis"
+
+    @pytest.mark.asyncio
+    async def test_invalid_url_skipped(self):
+        """Items with missing/invalid URLs should be skipped."""
+        bad_rss = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+          <channel>
+            <item><title>No URL item</title><link>not-a-url</link><description>test</description></item>
+            <item><title>Valid TC Item</title><link>https://techcrunch.com/valid</link><description>ok</description></item>
+          </channel>
+        </rss>"""
+
+        mock_response = MagicMock()
+        mock_response.content = bad_rss
+        mock_response.text = bad_rss.decode()
+        mock_response.status_code = 200
+        mock_response.url = "https://techcrunch.com/category/startups/feed/"
+        mock_response.raise_for_status = MagicMock()
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("scrapers.AsyncSession", return_value=mock_session):
+            from scrapers import scrape_techcrunch
+            run = _make_run(DataSource.TECHCRUNCH)
+            opps = await scrape_techcrunch(run)
+
+        assert len(opps) == 1
         assert len(run.errors_encountered) >= 1
-        assert any("bot-protection" in err.lower() for err in run.errors_encountered)

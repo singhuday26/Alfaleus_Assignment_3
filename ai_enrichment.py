@@ -44,7 +44,7 @@ RETRY_CONFIG = dict(
     reraise=True,
 )
 
-_PROMPT_TEMPLATE = """Analyze this startup opportunity. Return ONLY a valid JSON object matching this exact schema: {{"funding_range": "extracted amount or None", "startup_stage": "Idea/Pre-seed/Seed/Early/Growth/All", "is_remote": true/false/null}}. Do not include markdown blocks like ```json.
+_PROMPT_TEMPLATE = """Analyze this startup opportunity. Return ONLY a valid JSON object matching this exact schema: {{"funding_range": "extracted amount or None", "startup_stage": "Idea/Pre-seed/Seed/Early/Growth/All", "is_remote": true/false/null}}. You MUST return ONLY valid JSON. No conversational text, no markdown.
 Description: {description}
 """
 
@@ -121,6 +121,7 @@ async def _enrich_with_groq_desc(description: str) -> Optional[AITags]:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=512,
+                response_format={"type": "json_object"},
             )
             raw_text = completion.choices[0].message.content
             return _parse_llm_response(raw_text, GROQ_MODEL)
@@ -205,16 +206,18 @@ async def enrich_batch(opportunities: list[OpportunityDB]) -> dict[str, Optional
         return {opp.id: None for opp in opportunities}
 
     logger.info("Enriching %d opportunities with AI tags...", len(opportunities))
-    tasks = [enrich_opportunity(opp) for opp in opportunities]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
+    
     output: dict[str, Optional[AITags]] = {}
-    for opp, result in zip(opportunities, results):
-        if isinstance(result, Exception):
-            logger.error("Enrichment task exception for '%s': %s", opp.title, result)
-            output[opp.id] = None
-        else:
+    for opp in opportunities:
+        try:
+            result = await enrich_opportunity(opp)
             output[opp.id] = result
+        except Exception as exc:
+            logger.error("Enrichment task exception for '%s': %s", opp.title, exc)
+            output[opp.id] = None
+            
+        # Respect 6000 TPM limit (mainly for Groq fallback)
+        await asyncio.sleep(2.5)
 
     success_count = sum(1 for v in output.values() if v is not None)
     logger.info("AI enrichment complete: %d/%d succeeded", success_count, len(opportunities))

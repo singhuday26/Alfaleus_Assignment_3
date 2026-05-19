@@ -49,7 +49,10 @@ class TestOpportunitiesEndpoint:
         mock_cursor.sort = MagicMock(return_value=mock_cursor)
         mock_cursor.skip = MagicMock(return_value=mock_cursor)
         mock_cursor.limit = MagicMock(return_value=mock_cursor)
-        mock_cursor.__aiter__ = MagicMock(return_value=iter(docs))
+        async def async_gen():
+            for doc in docs:
+                yield doc
+        mock_cursor.__aiter__ = MagicMock(return_value=async_gen())
 
         mock_col.find = MagicMock(return_value=mock_cursor)
         return mock_col
@@ -66,15 +69,18 @@ class TestOpportunitiesEndpoint:
 
         mock_col = self._mock_db_opportunities([sample_doc], total=1)
 
-        with patch("api.get_db_dep") as mock_dep:
-            mock_db = MagicMock()
-            mock_db.__getitem__ = MagicMock(return_value=mock_col)
+        from api import app, get_db_dep
+        mock_db = MagicMock()
+        mock_db.__getitem__ = MagicMock(return_value=mock_col)
 
-            async def mock_gen():
-                yield mock_db
+        async def mock_gen():
+            yield mock_db
 
-            mock_dep.return_value = mock_gen()
+        app.dependency_overrides[get_db_dep] = mock_gen
+        try:
             response = client.get("/opportunities?page=1&page_size=10")
+        finally:
+            app.dependency_overrides.clear()
 
         assert response.status_code == 200
         data = response.json()
@@ -86,16 +92,20 @@ class TestOpportunitiesEndpoint:
     def test_returns_200_on_empty_results(self, client):
         mock_col = self._mock_db_opportunities([], total=0)
 
-        with patch("api.get_db_dep") as mock_dep:
-            mock_db = MagicMock()
-            mock_db.__getitem__ = MagicMock(return_value=mock_col)
+        from api import app, get_db_dep
+        mock_db = MagicMock()
+        mock_db.__getitem__ = MagicMock(return_value=mock_col)
 
-            async def mock_gen():
-                yield mock_db
+        async def mock_gen():
+            yield mock_db
 
-            mock_dep.return_value = mock_gen()
+        app.dependency_overrides[get_db_dep] = mock_gen
+        try:
             response = client.get("/opportunities")
+        finally:
+            app.dependency_overrides.clear()
 
+        print(f"DEBUG RESPONSE: {response.json()}")
         assert response.status_code == 200
         assert response.json()["total"] == 0
 
@@ -137,17 +147,20 @@ class TestStatsEndpoint:
     def test_stats_returns_expected_keys(self, client):
         mock_col = MagicMock()
         mock_col.count_documents = AsyncMock(return_value=42)
-        mock_col.distinct = AsyncMock(return_value=["opportunity_desk", "f6s"])
+        mock_col.distinct = AsyncMock(return_value=["opportunity_desk", "techcrunch"])
 
-        with patch("api.get_db_dep") as mock_dep:
-            mock_db = MagicMock()
-            mock_db.__getitem__ = MagicMock(return_value=mock_col)
+        from api import app, get_db_dep
+        mock_db = MagicMock()
+        mock_db.__getitem__ = MagicMock(return_value=mock_col)
 
-            async def mock_gen():
-                yield mock_db
+        async def mock_gen():
+            yield mock_db
 
-            mock_dep.return_value = mock_gen()
+        app.dependency_overrides[get_db_dep] = mock_gen
+        try:
             response = client.get("/stats")
+        finally:
+            app.dependency_overrides.clear()
 
         assert response.status_code == 200
         data = response.json()

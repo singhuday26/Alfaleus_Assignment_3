@@ -38,7 +38,7 @@ async def _run_source_pipeline(source: DataSource) -> ScraperRun:
     4. AI enrich the newly inserted batch
     5. Persist updated ScraperRun audit doc
     """
-    from scrapers import scrape_opportunity_desk, scrape_f6s
+    from scrapers import scrape_opportunity_desk, scrape_techcrunch
     from dedup import DeduplicationEngine, handle_duplicate_key_error
     from ai_enrichment import enrich_batch, persist_ai_tags
 
@@ -53,8 +53,8 @@ async def _run_source_pipeline(source: DataSource) -> ScraperRun:
         # ── Step 1: Scrape ────────────────────────────────────────
         if source == DataSource.OPPORTUNITY_DESK:
             raw_items = await scrape_opportunity_desk(run)
-        elif source == DataSource.F6S:
-            raw_items = await scrape_f6s(run)
+        elif source == DataSource.TECHCRUNCH:
+            raw_items = await scrape_techcrunch(run)
         else:
             run.log_error(f"Unknown source: {source.value}")
             return await _finalize_run(run, ScraperStatus.FAILED, db)
@@ -145,7 +145,7 @@ async def _finalize_run(
 async def run_pipeline() -> None:
     """APScheduler job: run pipeline for all sources sequentially."""
     logger.info("[Scheduler] Cron triggered — running all sources")
-    for source in [DataSource.OPPORTUNITY_DESK, DataSource.F6S]:
+    for source in [DataSource.OPPORTUNITY_DESK, DataSource.TECHCRUNCH]:
         try:
             await _run_source_pipeline(source)
         except Exception as exc:

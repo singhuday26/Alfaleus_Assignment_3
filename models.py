@@ -25,7 +25,7 @@ from pydantic import (
 
 class DataSource(str, Enum):
     OPPORTUNITY_DESK = "opportunity_desk"
-    F6S = "f6s"
+    TECHCRUNCH = "techcrunch"
     MANUAL = "manual"
 
 
@@ -178,7 +178,7 @@ class ScraperRun(BaseModel):
 
     # Error tracking
     errors_encountered: list[str] = Field(default_factory=list, max_length=100)
-    pages_scraped: int = 0       # Relevant for F6S pagination
+    pages_scraped: int = 0       # Relevant for paginated scrapers
 
     def finalize(
         self,
