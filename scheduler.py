@@ -86,7 +86,7 @@ async def _run_source_pipeline(source: DataSource) -> ScraperRun:
                 await engine.add_to_cache(opp_db)
             except pymongo.errors.DuplicateKeyError:
                 duplicate_count += 1
-                await handle_duplicate_key_error(opp_in.url, db)
+                await handle_duplicate_key_error(opp_in.source_url, db)
 
         logger.info(
             "[Scheduler] %s: inserted=%d duplicates=%d",
@@ -107,10 +107,10 @@ async def _run_source_pipeline(source: DataSource) -> ScraperRun:
         # ── Step 5: Finalize run ──────────────────────────────────
         return await _finalize_run(
             run, ScraperStatus.SUCCESS, db,
-            fetched=run.fetched_count,
+            items_scraped=run.items_scraped,
             validated=run.validated_count,
-            inserted=len(new_docs),
-            duplicates=duplicate_count,
+            items_added=len(new_docs),
+            items_duplicate=duplicate_count,
             pages=getattr(run, "pages_scraped", 0),
         )
 
@@ -135,7 +135,7 @@ async def _finalize_run(
     )
     logger.info(
         "[Scheduler] Run finalized: id=%s status=%s inserted=%d",
-        run.id, run.status.value, run.inserted_count
+        run.id, run.status.value, run.items_added
     )
     return run
 

@@ -3,7 +3,7 @@ ai_enrichment.py — Alfaleus LLM Auto-Tagging  [Agent 2]
 
 Async LLM enrichment with:
 - Primary: Google Gemini (gemini-2.0-flash)
-- Fallback: Anthropic Claude (claude-sonnet-4-5)
+- Fallback: Groq (llama3-8b-8192)
 - Strict JSON output enforced via response schema + Pydantic validation
 - Semaphore-bounded concurrency to respect API rate limits
 - Full retry with exponential backoff on transient API errors

@@ -12,7 +12,7 @@ from models import DataSource, OpportunityIn
 def _make_opp(**kwargs) -> OpportunityIn:
     defaults = dict(
         title="MedTech Startup Fellowship 2025",
-        url="https://example.com/fellowship-2025",
+        source_url="https://example.com/fellowship-2025",
         source=DataSource.OPPORTUNITY_DESK,
         description="Apply now for funding",
     )
@@ -39,9 +39,9 @@ class TestTier1URL:
     @pytest.mark.asyncio
     async def test_catches_existing_url(self, engine, mock_db):
         """Tier 1: URL already in DB → is_duplicate=True, tier_caught=1."""
-        mock_db["opportunities"].find_one = AsyncMock(return_value={"url": "https://example.com/fellowship-2025"})
+        mock_db["opportunities"].find_one = AsyncMock(return_value={"source_url": "https://example.com/fellowship-2025"})
         opp = _make_opp()
-        result = await engine._check_url(opp.url)
+        result = await engine._check_url(opp.source_url)
         assert result.is_duplicate is True
         assert result.tier_caught == 1
 
@@ -50,7 +50,7 @@ class TestTier1URL:
         """Tier 1: URL not in DB → not a duplicate."""
         mock_db["opportunities"].find_one = AsyncMock(return_value=None)
         opp = _make_opp()
-        result = await engine._check_url(opp.url)
+        result = await engine._check_url(opp.source_url)
         assert result.is_duplicate is False
 
 
@@ -67,10 +67,10 @@ class TestTier2ContentHash:
         async def mock_find_one(query, projection=None):
             nonlocal call_count
             call_count += 1
-            if "url" in query:
+            if "source_url" in query:
                 return None  # Tier 1: URL not found
             if "content_hash" in query:
-                return {"url": "https://example.com/original"}  # Tier 2 hit
+                return {"source_url": "https://example.com/original"}  # Tier 2 hit
             return None
 
         mock_db["opportunities"].find_one = AsyncMock(side_effect=mock_find_one)
@@ -82,7 +82,7 @@ class TestTier2ContentHash:
     async def test_different_content_passes(self, engine, mock_db):
         """Tier 2: Different content → hash lookup misses."""
         mock_db["opportunities"].find_one = AsyncMock(return_value=None)
-        opp = _make_opp(title="Completely Different Grant", url="https://example.com/grant")
+        opp = _make_opp(title="Completely Different Grant", source_url="https://example.com/grant")
         result = await engine._check_content_hash(opp)
         assert result.is_duplicate is False
 
@@ -107,11 +107,11 @@ class TestTier3Fuzzy:
     async def test_catches_rephrased_title(self, engine, mock_db):
         """Tier 3: Word-reordered title above threshold → caught."""
         engine._title_cache = [
-            ("MedTech Startup Fellowship 2025", "https://example.com/orig"),
-            ("Climate Innovation Grant Program", "https://example.com/climate"),
+            ("MedTech Startup Fellowship 2025", "https://example.com/orig", None),
+            ("Climate Innovation Grant Program", "https://example.com/climate", None),
         ]
         # Slightly rephrased version
-        opp = _make_opp(title="2025 Startup Fellowship MedTech", url="https://example.com/new")
+        opp = _make_opp(title="2025 Startup Fellowship MedTech", source_url="https://example.com/new")
         result = await engine._check_fuzzy(opp)
         assert result.is_duplicate is True
         assert result.tier_caught == 3
@@ -121,9 +121,9 @@ class TestTier3Fuzzy:
     async def test_passes_genuinely_different_title(self, engine, mock_db):
         """Tier 3: Genuinely different title → passes."""
         engine._title_cache = [
-            ("MedTech Startup Fellowship 2025", "https://example.com/orig"),
+            ("MedTech Startup Fellowship 2025", "https://example.com/orig", None),
         ]
-        opp = _make_opp(title="Quantum Computing Research Award", url="https://example.com/quantum")
+        opp = _make_opp(title="Quantum Computing Research Award", source_url="https://example.com/quantum")
         result = await engine._check_fuzzy(opp)
         assert result.is_duplicate is False
 
@@ -147,7 +147,7 @@ class TestFullPipeline:
     async def test_new_opportunity_passes_all_tiers(self, engine, mock_db):
         """End-to-end: Brand new opportunity → not a duplicate."""
         mock_db["opportunities"].find_one = AsyncMock(return_value=None)
-        engine._title_cache = [("Something Totally Different", "https://other.com")]
+        engine._title_cache = [("Something Totally Different", "https://other.com", None)]
         opp = _make_opp()
         result = await engine.check(opp)
         assert result.is_duplicate is False

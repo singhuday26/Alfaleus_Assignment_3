@@ -9,6 +9,7 @@ Routes:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -98,7 +99,7 @@ async def health_check() -> dict[str, Any]:
         "environment": settings.environment,
         "llm": {
             "gemini": settings.gemini_available,
-            "claude": settings.claude_available,
+            "groq": settings.groq_available,
         },
     }
 
@@ -264,5 +265,3 @@ def _serialize_doc(doc: dict) -> dict:
             doc[k] = v.isoformat()
     return doc
 
-
-import asyncio  # noqa: E402 — imported here to avoid top-level async issues

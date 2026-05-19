@@ -228,7 +228,7 @@ def _parse_f6s_page(soup: BeautifulSoup) -> list[dict]:
             try:
                 title_el = (
                     card.select_one("h2, h3, .program-title, .card-title, [class*='title']")
-                    or card if card.name == "a" else None
+                    or (card if card.name == "a" else None)
                 )
                 title = title_el.get_text(strip=True) if title_el else ""
             except Exception:

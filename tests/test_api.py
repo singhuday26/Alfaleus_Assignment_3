@@ -114,13 +114,13 @@ class TestRunScraperEndpoint:
         ):
             mock_settings.api_secret_key = "test-secret"
             mock_settings.gemini_available = False
-            mock_settings.claude_available = False
+            mock_settings.groq_available = False
 
             response = client.post(
                 "/run-scraper",
                 headers={"X-Api-Key": "test-secret"},
             )
-        assert response.status_code == 200
+        assert response.status_code == 202
         assert response.json()["status"] == "triggered"
 
     def test_rejects_wrong_api_key(self, client):

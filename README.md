@@ -1,9 +1,9 @@
 # 🚀 Startup Opportunity Aggregator
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.103.0-009688?style=for-the-badge&logo=fastapi)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.111.0-009688?style=for-the-badge&logo=fastapi)
 ![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?style=for-the-badge&logo=mongodb)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.28.0-FF4B4B?style=for-the-badge&logo=streamlit)
+![Streamlit](https://img.shields.io/badge/Streamlit-1.35.0-FF4B4B?style=for-the-badge&logo=streamlit)
 
 The Startup Opportunity Aggregator is a production-grade data pipeline designed to automate the discovery of grants, accelerators, and funding opportunities within the MedTech and Startup ecosystem. It leverages asynchronous web scraping, a robust 3-tier deduplication engine, and AI-driven tagging to deliver high-signal, structured data to an optimized Streamlit dashboard.
 
@@ -27,7 +27,7 @@ graph TD
 | **Frontend** | Streamlit | Rapid development of interactive data applications; `@st.cache_data` ensures lightning-fast UI responsiveness. |
 | **Backend** | FastAPI | High performance, asynchronous framework with built-in Pydantic validation for robust API development. |
 | **Database** | MongoDB | Flexible schema for semi-structured scraping data; native JSON-like document storage. |
-| **AI / Enrichment**| Gemini/Claude | LLMs for automated tagging, categorization, and metadata extraction, enforced via Pydantic schemas. |
+| **AI / Enrichment**| Gemini/Groq | LLMs for automated tagging, categorization, and metadata extraction, enforced via Pydantic schemas. |
 | **Ingestion** | httpx, BeautifulSoup, feedparser | Asynchronous HTTP requests and robust parsing of both RSS feeds and unstructured HTML DOMs. |
 
 ## Quick Start Guide
