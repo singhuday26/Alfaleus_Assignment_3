@@ -216,9 +216,19 @@ def main():
             audit_data = []
             for r in runs:
                 errors = r.get("errors_encountered", [])
+                status_raw = r.get("status", "failed")
+                if status_raw == "success":
+                    status_display = "✅ Success"
+                elif status_raw == "running":
+                    status_display = "⏳ Running"
+                elif status_raw == "partial":
+                    status_display = "⚠️ Partial"
+                else:
+                    status_display = f"❌ {status_raw.title()}"
+
                 audit_data.append({
                     "Run ID": r.get("id", ""),
-                    "Status": "✅ Success" if r.get("status") == "success" else f"❌ {r.get('status', 'failed').title()}",
+                    "Status": status_display,
                     "Source": r.get("source", ""),
                     "Time": pd.to_datetime(r.get("started_at")).strftime("%Y-%m-%d %H:%M") if r.get("started_at") else "",
                     "Items Added": r.get("items_added", 0),
