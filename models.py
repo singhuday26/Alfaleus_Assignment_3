@@ -60,6 +60,17 @@ class AITags(BaseModel):
     is_remote: Optional[bool] = None
 
 
+class OpportunityAnalytics(BaseModel):
+    """Calculated text complexity and data profile metrics."""
+    character_count: int = Field(description="Character count of description")
+    word_count: int = Field(description="Word count of description")
+    html_element_count: int = Field(default=0, description="HTML elements in raw data")
+    text_ratio: float = Field(default=0.0, description="HTML element to text density ratio")
+    list_item_count: int = Field(default=0, description="List item element count")
+    scraped_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    enriched_at: Optional[datetime] = None
+
+
 # ── Ingest Model (Raw Scraper Output) ─────────────────────────────────────────
 
 class OpportunityIn(BaseModel):
@@ -78,6 +89,7 @@ class OpportunityIn(BaseModel):
     organization: str = Field(default="", max_length=300)
     location: str = Field(default="", max_length=300)
     raw_tags: list[str] = Field(default_factory=list, description="Tags from source HTML/RSS")
+    analytics: Optional[OpportunityAnalytics] = None
 
     @field_validator("source_url")
     @classmethod
@@ -140,12 +152,22 @@ class OpportunityDB(BaseModel):
     ai_tags: Optional[AITags] = None
     ai_enrichment_attempted: bool = False
 
+    # Ingestion analytics
+    analytics: Optional[OpportunityAnalytics] = None
+
     @classmethod
     def from_ingest(cls, opp: OpportunityIn) -> "OpportunityDB":
         """Construct a DB document from a validated ingest model."""
         data = opp.model_dump()
         data["content_hash"] = opp.compute_content_hash()
         data["_id"] = str(uuid4())
+        
+        # Populate analytics if not present in ingest (fallback)
+        if not data.get("analytics"):
+            from utils import calculate_text_metrics
+            analytics_obj = calculate_text_metrics(opp.description, opp.description)
+            data["analytics"] = analytics_obj.model_dump()
+            
         return cls(**data)
 
     def to_mongo_doc(self) -> dict[str, Any]:
@@ -179,6 +201,7 @@ class ScraperRun(BaseModel):
     # Error tracking
     errors_encountered: list[str] = Field(default_factory=list, max_length=100)
     pages_scraped: int = 0       # Relevant for paginated scrapers
+    analytics: Optional[dict[str, Any]] = None
 
     def finalize(
         self,
@@ -190,15 +213,27 @@ class ScraperRun(BaseModel):
         pages: int = 0,
     ) -> "ScraperRun":
         """Return updated model with final stats (immutable update pattern)."""
+        completed = datetime.now(timezone.utc)
+        duration = (completed - self.started_at).total_seconds()
+        throughput = round(items_scraped / max(0.001, duration), 4)
+        source_dist = {self.source.value: 1.0}
+
+        analytics_payload = {
+            "execution_duration_seconds": round(duration, 4),
+            "throughput_velocity": throughput,
+            "source_distribution": source_dist,
+        }
+
         return self.model_copy(
             update={
                 "status": status,
-                "completed_at": datetime.now(timezone.utc),
+                "completed_at": completed,
                 "items_scraped": items_scraped,
                 "validated_count": validated,
                 "items_added": items_added,
                 "items_duplicate": items_duplicate,
                 "pages_scraped": pages,
+                "analytics": analytics_payload,
             }
         )
 

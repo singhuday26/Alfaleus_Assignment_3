@@ -128,14 +128,19 @@ async def scrape_opportunity_desk(run: ScraperRun) -> list[OpportunityIn]:
             # Extract tags from categories
             tags = [tag.get_text(strip=True) for tag in entry.find_all("category") if tag.get_text(strip=True)]
 
+            from utils import calculate_text_metrics
+            clean_desc = _strip_html(content)[:2000]
+            analytics_obj = calculate_text_metrics(content, clean_desc)
+
             opp = OpportunityIn(
                 title=title,
                 source_url=link,
                 source=DataSource.OPPORTUNITY_DESK,
-                description=_strip_html(content)[:2000],
+                description=clean_desc,
                 deadline=deadline,
                 organization="",
                 raw_tags=tags,
+                analytics=analytics_obj,
             )
             opportunities.append(opp)
         except ValidationError as e:
@@ -199,14 +204,19 @@ async def scrape_techcrunch(run: ScraperRun) -> list[OpportunityIn]:
                 if tag.get_text(strip=True)
             ]
 
+            from utils import calculate_text_metrics
+            clean_desc = _strip_html(description)[:2000]
+            analytics_obj = calculate_text_metrics(description, clean_desc)
+
             opp = OpportunityIn(
                 title=title,
                 source_url=link,
                 source=DataSource.TECHCRUNCH,
-                description=_strip_html(description)[:2000],
+                description=clean_desc,
                 deadline=deadline,
                 organization=organization,
                 raw_tags=tags,
+                analytics=analytics_obj,
             )
             opportunities.append(opp)
         except ValidationError as e:

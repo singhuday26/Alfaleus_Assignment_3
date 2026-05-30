@@ -226,6 +226,7 @@ async def enrich_batch(opportunities: list[OpportunityDB]) -> dict[str, Optional
 
 async def persist_ai_tags(opp_id: str, tags: AITags) -> bool:
     """Write AI tags back to the MongoDB document. Returns True on success."""
+    from datetime import datetime, timezone
     db = get_db()
     try:
         result = await db[COLLECTION_OPPORTUNITIES].update_one(
@@ -234,6 +235,7 @@ async def persist_ai_tags(opp_id: str, tags: AITags) -> bool:
                 "$set": {
                     "ai_tags": tags.model_dump(mode="python"),
                     "ai_enrichment_attempted": True,
+                    "analytics.enriched_at": datetime.now(timezone.utc),
                 }
             },
         )

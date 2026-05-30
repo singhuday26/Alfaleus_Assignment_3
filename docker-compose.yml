@@ -1,0 +1,71 @@
+services:
+  # ── Local Database Service ──────────────────────────────────────────────────
+  db_local:
+    image: mongo:6.0
+    container_name: db_local
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - pipeline_mesh
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # ── Backend API Engine & Scheduler Service ──────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: alfaleus_api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - MONGO_URI=mongodb://db_local:27017/alfaleus
+    depends_on:
+      db_local:
+        condition: service_healthy
+    networks:
+      - pipeline_mesh
+    restart: unless-stopped
+    command: uvicorn api:app --host 0.0.0.0 --port 8000
+
+  # ── Frontend Dashboard Service ──────────────────────────────────────────────
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: alfaleus_streamlit
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - MONGO_URI=mongodb://db_local:27017/alfaleus
+    depends_on:
+      db_local:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - pipeline_mesh
+    restart: unless-stopped
+    command: streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+
+# ── Isolated Mesh Network ─────────────────────────────────────────────────────
+networks:
+  pipeline_mesh:
+    name: pipeline_mesh
+    driver: bridge
+
+# ── Persistent Storage Volumes ────────────────────────────────────────────────
+volumes:
+  mongo_data:
+    name: mongo_data
